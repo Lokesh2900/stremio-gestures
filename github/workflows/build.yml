@@ -1,0 +1,51 @@
+name: Build Dylib
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install ldid
+      run: brew install ldid
+
+    - name: Download iOS SDK
+      run: |
+        curl -L -o sdk.tar.xz "https://github.com/theos/sdks/releases/download/master-146e41f/iPhoneOS16.5.sdk.tar.xz"
+        tar -xf sdk.tar.xz
+        sudo mkdir -p /Library/Developer/CommandLineTools/SDKs
+        sudo mv iPhoneOS16.5.sdk /Library/Developer/CommandLineTools/SDKs/
+
+    - name: Build dylib
+      run: |
+        xcrun clang \
+          -arch arm64 \
+          -dynamiclib \
+          -isysroot /Library/Developer/CommandLineTools/SDKs/iPhoneOS16.5.sdk \
+          -framework UIKit \
+          -framework Foundation \
+          -framework AVFoundation \
+          -mios-version-min=14.0 \
+          -Wl,-undefined,dynamic_lookup \
+          -o StremioGestures.dylib \
+          Tweak.m
+        ls -la StremioGestures.dylib
+
+    - name: Sign dylib
+      run: ldid -S StremioGestures.dylib
+
+    - name: Upload dylib
+      uses: actions/upload-artifact@v4
+      with:
+        name: StremioGestures-dylib
+        path: StremioGestures.dylib
