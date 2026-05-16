@@ -197,6 +197,12 @@
     }
 }
 
+// Override hitTest to pass taps through to controls underneath
+- (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
+    // Always handle the touch ourselves
+    return self;
+}
+
 @end
 
 static IMP original_viewDidAppear;
@@ -205,25 +211,18 @@ static void swizzled_viewDidAppear(UIViewController *self,
                                     SEL _cmd, BOOL animated) {
     ((void(*)(id,SEL,BOOL))original_viewDidAppear)(self, _cmd, animated);
 
-    Ivar playerViewIvar = class_getInstanceVariable(
-        [self class], "playerView");
-    UIView *playerView = nil;
-    if (playerViewIvar) {
-        playerView = (__bridge UIView *)object_getIvar(self, playerViewIvar);
-    }
-    if (!playerView) {
-        playerView = self.view;
-    }
+    UIWindow *window = self.view.window;
+    if (!window) return;
 
-    for (UIView *sub in playerView.subviews) {
+    for (UIView *sub in window.subviews) {
         if ([sub isKindOfClass:[GestureOverlayView class]]) return;
     }
 
     GestureOverlayView *overlay = [[GestureOverlayView alloc]
-                                    initWithFrame:playerView.bounds];
+                                    initWithFrame:window.bounds];
     overlay.autoresizingMask =
         UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    [playerView addSubview:overlay];
+    [window addSubview:overlay];
 }
 
 __attribute__((constructor))
