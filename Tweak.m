@@ -197,10 +197,10 @@
     }
 }
 
-// Override hitTest to pass taps through to controls underneath
 - (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
-    // Always handle the touch ourselves
-    return self;
+    UIView *hitView = [super hitTest:point withEvent:event];
+    if (hitView == self) return self;
+    return nil;
 }
 
 @end
