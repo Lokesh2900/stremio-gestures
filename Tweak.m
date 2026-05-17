@@ -72,6 +72,61 @@
 
 @implementation StremioGestureHandler
 
+// Find and set AVPlayer rate by walking up responder chain
+- (void)setPlayerRate:(float)rate fromView:(UIView *)view {
+    @try {
+        UIResponder *responder = view;
+        while (responder) {
+            if ([responder isKindOfClass:[UIViewController class]]) {
+                UIViewController *vc = (UIViewController *)responder;
+
+                // Try playerManager ivar
+                Ivar managerIvar = class_getInstanceVariable(
+                    [vc class], "playerManager");
+                if (managerIvar) {
+                    id manager = (__bridge id)object_getIvar(vc, managerIvar);
+                    if (manager) {
+                        // Try player ivar inside manager
+                        Ivar playerIvar = class_getInstanceVariable(
+                            [manager class], "player");
+                        if (playerIvar) {
+                            id player = (__bridge id)object_getIvar(
+                                manager, playerIvar);
+                            if (player &&
+                                [player respondsToSelector:@selector(setRate:)]) {
+                                [player setValue:@(rate) forKey:@"rate"];
+                                return;
+                            }
+                        }
+                    }
+                }
+                break;
+            }
+            responder = responder.nextResponder;
+        }
+    } @catch (NSException *e) {}
+}
+
+// Find and set system volume using private API safely
+- (void)setSystemVolume:(float)volume {
+    @try {
+        // Use MPVolumeView's slider - safest way on non-jailbroken
+        Class mpVolumeView = NSClassFromString(@"MPVolumeView");
+        if (mpVolumeView) {
+            id volumeView = [[mpVolumeView alloc] init];
+            for (UIView *view in [volumeView subviews]) {
+                if ([view isKindOfClass:[UISlider class]]) {
+                    UISlider *slider = (UISlider *)view;
+                    dispatch_async(dispatch_get_main_queue(), ^{
+                        slider.value = volume;
+                    });
+                    return;
+                }
+            }
+        }
+    } @catch (NSException *e) {}
+}
+
 - (void)handlePan:(UIPanGestureRecognizer *)gesture {
     @try {
         CGPoint translation = [gesture translationInView:gesture.view];
@@ -83,7 +138,13 @@
 
         if (gesture.state == UIGestureRecognizerStateBegan) {
             _startBrightness = [UIScreen mainScreen].brightness;
-            _startVolume = [AVAudioSession sharedInstance].outputVolume;
+            @try {
+                AVAudioSession *session = [AVAudioSession sharedInstance];
+                [session setActive:YES error:nil];
+                _startVolume = session.outputVolume;
+            } @catch (NSException *e) {
+                _startVolume = 0.5;
+            }
         }
 
         if (isHorizontal) {
@@ -96,24 +157,30 @@
                 [self.overlay showHUD:[NSString stringWithFormat:@"%@ %.0f sec",
                                       dir, fabs(seconds)]];
             } else {
-                [self.overlay showHUDPersistent:[NSString stringWithFormat:@"%@ %.0f sec",
-                                                dir, fabs(seconds)]];
+                [self.overlay showHUDPersistent:
+                    [NSString stringWithFormat:@"%@ %.0f sec",
+                     dir, fabs(seconds)]];
             }
         } else {
             CGFloat delta = -(translation.y / screenHeight);
             if (location.x < screenWidth / 2) {
                 // LEFT - Brightness
-                CGFloat newBrightness = MAX(0.0, MIN(1.0, _startBrightness + delta));
+                CGFloat newBrightness = MAX(0.0, MIN(1.0,
+                    _startBrightness + delta));
                 [UIScreen mainScreen].brightness = newBrightness;
                 NSString *icon = newBrightness > 0.5 ? @"🔆" : @"🔅";
-                [self.overlay showHUDPersistent:[NSString stringWithFormat:@"%@ %.0f%%",
-                                                icon, newBrightness * 100]];
+                [self.overlay showHUDPersistent:
+                    [NSString stringWithFormat:@"%@ %.0f%%",
+                     icon, newBrightness * 100]];
             } else {
-                // RIGHT - Volume (HUD only, safe)
-                CGFloat newVolume = MAX(0.0, MIN(1.0, _startVolume + delta));
+                // RIGHT - Volume
+                CGFloat newVolume = MAX(0.0, MIN(1.0,
+                    _startVolume + delta));
+                [self setSystemVolume:newVolume];
                 NSString *icon = newVolume > 0.5 ? @"🔊" : @"🔉";
-                [self.overlay showHUDPersistent:[NSString stringWithFormat:@"%@ %.0f%%",
-                                                icon, newVolume * 100]];
+                [self.overlay showHUDPersistent:
+                    [NSString stringWithFormat:@"%@ %.0f%%",
+                     icon, newVolume * 100]];
             }
             if (gesture.state == UIGestureRecognizerStateEnded) {
                 [self.overlay showHUD:self.overlay.hudLabel.text];
@@ -127,7 +194,8 @@
         CGPoint location = [gesture locationInView:gesture.view];
         if (location.x < gesture.view.bounds.size.width / 2) {
             [[NSNotificationCenter defaultCenter]
-                postNotificationName:@"StremioGestureSeek" object:@(-10.0)];
+                postNotificationName:@"StremioGestureSeek"
+                              object:@(-10.0)];
             [self.overlay showHUD:@"⏪ -10 sec"];
         }
     } @catch (NSException *e) {}
@@ -138,7 +206,8 @@
         CGPoint location = [gesture locationInView:gesture.view];
         if (location.x >= gesture.view.bounds.size.width / 2) {
             [[NSNotificationCenter defaultCenter]
-                postNotificationName:@"StremioGestureSeek" object:@(10.0)];
+                postNotificationName:@"StremioGestureSeek"
+                              object:@(10.0)];
             [self.overlay showHUD:@"⏩ +10 sec"];
         }
     } @catch (NSException *e) {}
@@ -148,10 +217,12 @@
     @try {
         if (gesture.state == UIGestureRecognizerStateBegan) {
             _isLongPressing = YES;
+            [self setPlayerRate:2.0 fromView:gesture.view];
             [self.overlay showHUDPersistent:@"⚡️ 2x Speed"];
         } else if (gesture.state == UIGestureRecognizerStateEnded ||
                    gesture.state == UIGestureRecognizerStateCancelled) {
             _isLongPressing = NO;
+            [self setPlayerRate:1.0 fromView:gesture.view];
             [self.overlay showHUD:@"▶️ 1x Speed"];
         }
     } @catch (NSException *e) {}
