@@ -16,7 +16,6 @@
     self = [super initWithFrame:frame];
     if (self) {
         self.backgroundColor = [UIColor clearColor];
-        // Key fix - don't block touches
         self.userInteractionEnabled = NO;
 
         _hudLabel = [[UILabel alloc] initWithFrame:CGRectMake(0, 0, 180, 55)];
@@ -67,12 +66,11 @@
 
 @end
 
-// Gesture handler - separate from overlay so touches pass through
 @interface StremioGestureHandler : NSObject
 @property (nonatomic, assign) CGFloat startBrightness;
 @property (nonatomic, assign) CGFloat startVolume;
 @property (nonatomic, assign) BOOL isLongPressing;
-@property (nonatomic, weak) GestureOverlayView *overlay;
+@property (nonatomic, strong) GestureOverlayView *overlay;
 @end
 
 @implementation StremioGestureHandler
@@ -173,65 +171,54 @@
 
 @end
 
-// Store handler as associated object so it doesn't get deallocated
 static char kHandlerKey;
-
 static IMP original_viewDidAppear;
 
 static void swizzled_viewDidAppear(UIViewController *self,
                                     SEL _cmd, BOOL animated) {
     ((void(*)(id,SEL,BOOL))original_viewDidAppear)(self, _cmd, animated);
 
-    // Check if already set up
     if (objc_getAssociatedObject(self, &kHandlerKey)) return;
 
     UIView *playerView = self.view;
 
-    // Add HUD overlay - userInteractionEnabled NO so no crash
     GestureOverlayView *overlay = [[GestureOverlayView alloc]
                                     initWithFrame:playerView.bounds];
     overlay.autoresizingMask =
         UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     [playerView addSubview:overlay];
 
-    // Create gesture handler
     StremioGestureHandler *handler = [[StremioGestureHandler alloc] init];
     handler.overlay = overlay;
 
-    // Store handler so it stays alive
     objc_setAssociatedObject(self, &kHandlerKey, handler,
                              OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 
-    // Pan gesture - seek/volume/brightness
     UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc]
         initWithTarget:handler action:@selector(handlePan:)];
-    pan.cancelsTouchesInView = NO; // KEY - don't cancel Stremio touches
+    pan.cancelsTouchesInView = NO;
     pan.minimumNumberOfTouches = 1;
     pan.maximumNumberOfTouches = 1;
     [playerView addGestureRecognizer:pan];
 
-    // Double tap left - rewind
     UITapGestureRecognizer *doubleTapLeft = [[UITapGestureRecognizer alloc]
         initWithTarget:handler action:@selector(handleDoubleTapLeft:)];
     doubleTapLeft.numberOfTapsRequired = 2;
     doubleTapLeft.cancelsTouchesInView = NO;
     [playerView addGestureRecognizer:doubleTapLeft];
 
-    // Double tap right - forward
     UITapGestureRecognizer *doubleTapRight = [[UITapGestureRecognizer alloc]
         initWithTarget:handler action:@selector(handleDoubleTapRight:)];
     doubleTapRight.numberOfTapsRequired = 2;
     doubleTapRight.cancelsTouchesInView = NO;
     [playerView addGestureRecognizer:doubleTapRight];
 
-    // Long press - 2x speed
     UILongPressGestureRecognizer *longPress = [[UILongPressGestureRecognizer alloc]
         initWithTarget:handler action:@selector(handleLongPress:)];
     longPress.minimumPressDuration = 0.6;
     longPress.cancelsTouchesInView = NO;
     [playerView addGestureRecognizer:longPress];
 
-    // Pinch - zoom
     UIPinchGestureRecognizer *pinch = [[UIPinchGestureRecognizer alloc]
         initWithTarget:handler action:@selector(handlePinch:)];
     pinch.cancelsTouchesInView = NO;
