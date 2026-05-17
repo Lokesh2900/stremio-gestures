@@ -16,7 +16,9 @@
     self = [super initWithFrame:frame];
     if (self) {
         self.backgroundColor = [UIColor clearColor];
-        self.userInteractionEnabled = YES;
+        // Key fix - don't block touches
+        self.userInteractionEnabled = NO;
+
         _hudLabel = [[UILabel alloc] initWithFrame:CGRectMake(0, 0, 180, 55)];
         _hudLabel.textColor = [UIColor whiteColor];
         _hudLabel.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.65];
@@ -26,44 +28,10 @@
         _hudLabel.clipsToBounds = YES;
         _hudLabel.alpha = 0;
         _hudLabel.numberOfLines = 2;
+        _hudLabel.userInteractionEnabled = NO;
         [self addSubview:_hudLabel];
-        [self setupGestures];
     }
     return self;
-}
-
-- (void)setupGestures {
-    UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc]
-        initWithTarget:self action:@selector(handlePan:)];
-    pan.minimumNumberOfTouches = 1;
-    pan.maximumNumberOfTouches = 1;
-    [self addGestureRecognizer:pan];
-
-    UITapGestureRecognizer *doubleTapLeft = [[UITapGestureRecognizer alloc]
-        initWithTarget:self action:@selector(handleDoubleTapLeft:)];
-    doubleTapLeft.numberOfTapsRequired = 2;
-    [self addGestureRecognizer:doubleTapLeft];
-
-    UITapGestureRecognizer *doubleTapRight = [[UITapGestureRecognizer alloc]
-        initWithTarget:self action:@selector(handleDoubleTapRight:)];
-    doubleTapRight.numberOfTapsRequired = 2;
-    [self addGestureRecognizer:doubleTapRight];
-
-    UITapGestureRecognizer *singleTap = [[UITapGestureRecognizer alloc]
-        initWithTarget:self action:@selector(handleSingleTap:)];
-    singleTap.numberOfTapsRequired = 1;
-    [singleTap requireGestureRecognizerToFail:doubleTapLeft];
-    [singleTap requireGestureRecognizerToFail:doubleTapRight];
-    [self addGestureRecognizer:singleTap];
-
-    UILongPressGestureRecognizer *longPress = [[UILongPressGestureRecognizer alloc]
-        initWithTarget:self action:@selector(handleLongPress:)];
-    longPress.minimumPressDuration = 0.6;
-    [self addGestureRecognizer:longPress];
-
-    UIPinchGestureRecognizer *pinch = [[UIPinchGestureRecognizer alloc]
-        initWithTarget:self action:@selector(handlePinch:)];
-    [self addGestureRecognizer:pinch];
 }
 
 - (void)showHUD:(NSString *)text {
@@ -97,12 +65,24 @@
     }];
 }
 
+@end
+
+// Gesture handler - separate from overlay so touches pass through
+@interface StremioGestureHandler : NSObject
+@property (nonatomic, assign) CGFloat startBrightness;
+@property (nonatomic, assign) CGFloat startVolume;
+@property (nonatomic, assign) BOOL isLongPressing;
+@property (nonatomic, weak) GestureOverlayView *overlay;
+@end
+
+@implementation StremioGestureHandler
+
 - (void)handlePan:(UIPanGestureRecognizer *)gesture {
-    CGPoint translation = [gesture translationInView:self];
-    CGPoint velocity = [gesture velocityInView:self];
-    CGPoint location = [gesture locationInView:self];
-    CGFloat screenWidth = self.bounds.size.width;
-    CGFloat screenHeight = self.bounds.size.height;
+    CGPoint translation = [gesture translationInView:gesture.view];
+    CGPoint velocity = [gesture velocityInView:gesture.view];
+    CGPoint location = [gesture locationInView:gesture.view];
+    CGFloat screenWidth = gesture.view.bounds.size.width;
+    CGFloat screenHeight = gesture.view.bounds.size.height;
     BOOL isHorizontal = fabs(velocity.x) > fabs(velocity.y);
 
     if (gesture.state == UIGestureRecognizerStateBegan) {
@@ -118,11 +98,11 @@
             [[NSNotificationCenter defaultCenter]
                 postNotificationName:@"StremioGestureSeek"
                               object:@(seconds)];
-            [self showHUD:[NSString stringWithFormat:@"%@ %.0f sec",
-                          dir, fabs(seconds)]];
+            [self.overlay showHUD:[NSString stringWithFormat:@"%@ %.0f sec",
+                                  dir, fabs(seconds)]];
         } else {
-            [self showHUDPersistent:[NSString stringWithFormat:@"%@ %.0f sec",
-                                    dir, fabs(seconds)]];
+            [self.overlay showHUDPersistent:[NSString stringWithFormat:@"%@ %.0f sec",
+                                            dir, fabs(seconds)]];
         }
     } else {
         CGFloat delta = -(translation.y / screenHeight);
@@ -130,44 +110,38 @@
             CGFloat newBrightness = MAX(0.0, MIN(1.0, _startBrightness + delta));
             [UIScreen mainScreen].brightness = newBrightness;
             NSString *icon = newBrightness > 0.5 ? @"🔆" : @"🔅";
-            [self showHUDPersistent:[NSString stringWithFormat:@"%@ %.0f%%",
-                                    icon, newBrightness * 100]];
+            [self.overlay showHUDPersistent:[NSString stringWithFormat:@"%@ %.0f%%",
+                                            icon, newBrightness * 100]];
         } else {
             CGFloat newVolume = MAX(0.0, MIN(1.0, _startVolume + delta));
             [[NSNotificationCenter defaultCenter]
                 postNotificationName:@"StremioGestureVolume"
                               object:@(newVolume)];
             NSString *icon = newVolume > 0.5 ? @"🔊" : @"🔉";
-            [self showHUDPersistent:[NSString stringWithFormat:@"%@ %.0f%%",
-                                    icon, newVolume * 100]];
+            [self.overlay showHUDPersistent:[NSString stringWithFormat:@"%@ %.0f%%",
+                                            icon, newVolume * 100]];
         }
         if (gesture.state == UIGestureRecognizerStateEnded) {
-            [self showHUD:_hudLabel.text];
+            [self.overlay showHUD:self.overlay.hudLabel.text];
         }
     }
 }
 
-- (void)handleSingleTap:(UITapGestureRecognizer *)gesture {
-    [[NSNotificationCenter defaultCenter]
-        postNotificationName:@"StremioGesturePlayPause" object:nil];
-    [self showHUD:@"⏯️ Play / Pause"];
-}
-
 - (void)handleDoubleTapLeft:(UITapGestureRecognizer *)gesture {
-    CGPoint location = [gesture locationInView:self];
-    if (location.x < self.bounds.size.width / 2) {
+    CGPoint location = [gesture locationInView:gesture.view];
+    if (location.x < gesture.view.bounds.size.width / 2) {
         [[NSNotificationCenter defaultCenter]
             postNotificationName:@"StremioGestureSeek" object:@(-10.0)];
-        [self showHUD:@"⏪ -10 sec"];
+        [self.overlay showHUD:@"⏪ -10 sec"];
     }
 }
 
 - (void)handleDoubleTapRight:(UITapGestureRecognizer *)gesture {
-    CGPoint location = [gesture locationInView:self];
-    if (location.x >= self.bounds.size.width / 2) {
+    CGPoint location = [gesture locationInView:gesture.view];
+    if (location.x >= gesture.view.bounds.size.width / 2) {
         [[NSNotificationCenter defaultCenter]
             postNotificationName:@"StremioGestureSeek" object:@(10.0)];
-        [self showHUD:@"⏩ +10 sec"];
+        [self.overlay showHUD:@"⏩ +10 sec"];
     }
 }
 
@@ -176,34 +150,31 @@
         _isLongPressing = YES;
         [[NSNotificationCenter defaultCenter]
             postNotificationName:@"StremioGestureSpeed" object:@(2.0)];
-        [self showHUDPersistent:@"⚡️ 2x Speed"];
+        [self.overlay showHUDPersistent:@"⚡️ 2x Speed"];
     } else if (gesture.state == UIGestureRecognizerStateEnded ||
                gesture.state == UIGestureRecognizerStateCancelled) {
         _isLongPressing = NO;
         [[NSNotificationCenter defaultCenter]
             postNotificationName:@"StremioGestureSpeed" object:@(1.0)];
-        [self showHUD:@"▶️ 1x Speed"];
+        [self.overlay showHUD:@"▶️ 1x Speed"];
     }
 }
 
 - (void)handlePinch:(UIPinchGestureRecognizer *)gesture {
     if (gesture.state == UIGestureRecognizerStateChanged) {
-        self.superview.transform = CGAffineTransformScale(
-            self.superview.transform, gesture.scale, gesture.scale);
+        gesture.view.transform = CGAffineTransformScale(
+            gesture.view.transform, gesture.scale, gesture.scale);
         gesture.scale = 1.0;
     }
     if (gesture.state == UIGestureRecognizerStateEnded) {
-        [self showHUD:@"🔍 Zoom"];
+        [self.overlay showHUD:@"🔍 Zoom"];
     }
 }
 
-- (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
-    UIView *hitView = [super hitTest:point withEvent:event];
-    if (hitView == self) return self;
-    return nil;
-}
-
 @end
+
+// Store handler as associated object so it doesn't get deallocated
+static char kHandlerKey;
 
 static IMP original_viewDidAppear;
 
@@ -211,18 +182,60 @@ static void swizzled_viewDidAppear(UIViewController *self,
                                     SEL _cmd, BOOL animated) {
     ((void(*)(id,SEL,BOOL))original_viewDidAppear)(self, _cmd, animated);
 
-    UIWindow *window = self.view.window;
-    if (!window) return;
+    // Check if already set up
+    if (objc_getAssociatedObject(self, &kHandlerKey)) return;
 
-    for (UIView *sub in window.subviews) {
-        if ([sub isKindOfClass:[GestureOverlayView class]]) return;
-    }
+    UIView *playerView = self.view;
 
+    // Add HUD overlay - userInteractionEnabled NO so no crash
     GestureOverlayView *overlay = [[GestureOverlayView alloc]
-                                    initWithFrame:window.bounds];
+                                    initWithFrame:playerView.bounds];
     overlay.autoresizingMask =
         UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    [window addSubview:overlay];
+    [playerView addSubview:overlay];
+
+    // Create gesture handler
+    StremioGestureHandler *handler = [[StremioGestureHandler alloc] init];
+    handler.overlay = overlay;
+
+    // Store handler so it stays alive
+    objc_setAssociatedObject(self, &kHandlerKey, handler,
+                             OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+
+    // Pan gesture - seek/volume/brightness
+    UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc]
+        initWithTarget:handler action:@selector(handlePan:)];
+    pan.cancelsTouchesInView = NO; // KEY - don't cancel Stremio touches
+    pan.minimumNumberOfTouches = 1;
+    pan.maximumNumberOfTouches = 1;
+    [playerView addGestureRecognizer:pan];
+
+    // Double tap left - rewind
+    UITapGestureRecognizer *doubleTapLeft = [[UITapGestureRecognizer alloc]
+        initWithTarget:handler action:@selector(handleDoubleTapLeft:)];
+    doubleTapLeft.numberOfTapsRequired = 2;
+    doubleTapLeft.cancelsTouchesInView = NO;
+    [playerView addGestureRecognizer:doubleTapLeft];
+
+    // Double tap right - forward
+    UITapGestureRecognizer *doubleTapRight = [[UITapGestureRecognizer alloc]
+        initWithTarget:handler action:@selector(handleDoubleTapRight:)];
+    doubleTapRight.numberOfTapsRequired = 2;
+    doubleTapRight.cancelsTouchesInView = NO;
+    [playerView addGestureRecognizer:doubleTapRight];
+
+    // Long press - 2x speed
+    UILongPressGestureRecognizer *longPress = [[UILongPressGestureRecognizer alloc]
+        initWithTarget:handler action:@selector(handleLongPress:)];
+    longPress.minimumPressDuration = 0.6;
+    longPress.cancelsTouchesInView = NO;
+    [playerView addGestureRecognizer:longPress];
+
+    // Pinch - zoom
+    UIPinchGestureRecognizer *pinch = [[UIPinchGestureRecognizer alloc]
+        initWithTarget:handler action:@selector(handlePinch:)];
+    pinch.cancelsTouchesInView = NO;
+    [playerView addGestureRecognizer:pinch];
 }
 
 __attribute__((constructor))
