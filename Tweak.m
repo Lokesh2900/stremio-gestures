@@ -3,9 +3,6 @@
 #import <AVFoundation/AVFoundation.h>
 
 @interface GestureOverlayView : UIView
-@property (nonatomic, assign) CGFloat startBrightness;
-@property (nonatomic, assign) CGFloat startVolume;
-@property (nonatomic, assign) BOOL isLongPressing;
 @property (nonatomic, strong) UILabel *hudLabel;
 @property (nonatomic, strong) NSTimer *hudTimer;
 @end
@@ -76,97 +73,101 @@
 @implementation StremioGestureHandler
 
 - (void)handlePan:(UIPanGestureRecognizer *)gesture {
-    CGPoint translation = [gesture translationInView:gesture.view];
-    CGPoint velocity = [gesture velocityInView:gesture.view];
-    CGPoint location = [gesture locationInView:gesture.view];
-    CGFloat screenWidth = gesture.view.bounds.size.width;
-    CGFloat screenHeight = gesture.view.bounds.size.height;
-    BOOL isHorizontal = fabs(velocity.x) > fabs(velocity.y);
+    @try {
+        CGPoint translation = [gesture translationInView:gesture.view];
+        CGPoint velocity = [gesture velocityInView:gesture.view];
+        CGPoint location = [gesture locationInView:gesture.view];
+        CGFloat screenWidth = gesture.view.bounds.size.width;
+        CGFloat screenHeight = gesture.view.bounds.size.height;
+        BOOL isHorizontal = fabs(velocity.x) > fabs(velocity.y);
 
-    if (gesture.state == UIGestureRecognizerStateBegan) {
-        _startBrightness = [UIScreen mainScreen].brightness;
-        AVAudioSession *session = [AVAudioSession sharedInstance];
-        _startVolume = session.outputVolume;
-    }
+        if (gesture.state == UIGestureRecognizerStateBegan) {
+            _startBrightness = [UIScreen mainScreen].brightness;
+            _startVolume = [AVAudioSession sharedInstance].outputVolume;
+        }
 
-    if (isHorizontal) {
-        CGFloat seconds = translation.x / 3.0;
-        NSString *dir = seconds > 0 ? @"⏩" : @"⏪";
-        if (gesture.state == UIGestureRecognizerStateEnded) {
-            [[NSNotificationCenter defaultCenter]
-                postNotificationName:@"StremioGestureSeek"
-                              object:@(seconds)];
-            [self.overlay showHUD:[NSString stringWithFormat:@"%@ %.0f sec",
-                                  dir, fabs(seconds)]];
+        if (isHorizontal) {
+            CGFloat seconds = translation.x / 3.0;
+            NSString *dir = seconds > 0 ? @"⏩" : @"⏪";
+            if (gesture.state == UIGestureRecognizerStateEnded) {
+                [[NSNotificationCenter defaultCenter]
+                    postNotificationName:@"StremioGestureSeek"
+                                  object:@(seconds)];
+                [self.overlay showHUD:[NSString stringWithFormat:@"%@ %.0f sec",
+                                      dir, fabs(seconds)]];
+            } else {
+                [self.overlay showHUDPersistent:[NSString stringWithFormat:@"%@ %.0f sec",
+                                                dir, fabs(seconds)]];
+            }
         } else {
-            [self.overlay showHUDPersistent:[NSString stringWithFormat:@"%@ %.0f sec",
-                                            dir, fabs(seconds)]];
+            CGFloat delta = -(translation.y / screenHeight);
+            if (location.x < screenWidth / 2) {
+                // LEFT - Brightness
+                CGFloat newBrightness = MAX(0.0, MIN(1.0, _startBrightness + delta));
+                [UIScreen mainScreen].brightness = newBrightness;
+                NSString *icon = newBrightness > 0.5 ? @"🔆" : @"🔅";
+                [self.overlay showHUDPersistent:[NSString stringWithFormat:@"%@ %.0f%%",
+                                                icon, newBrightness * 100]];
+            } else {
+                // RIGHT - Volume (HUD only, safe)
+                CGFloat newVolume = MAX(0.0, MIN(1.0, _startVolume + delta));
+                NSString *icon = newVolume > 0.5 ? @"🔊" : @"🔉";
+                [self.overlay showHUDPersistent:[NSString stringWithFormat:@"%@ %.0f%%",
+                                                icon, newVolume * 100]];
+            }
+            if (gesture.state == UIGestureRecognizerStateEnded) {
+                [self.overlay showHUD:self.overlay.hudLabel.text];
+            }
         }
-    } else {
-        CGFloat delta = -(translation.y / screenHeight);
-        if (location.x < screenWidth / 2) {
-            CGFloat newBrightness = MAX(0.0, MIN(1.0, _startBrightness + delta));
-            [UIScreen mainScreen].brightness = newBrightness;
-            NSString *icon = newBrightness > 0.5 ? @"🔆" : @"🔅";
-            [self.overlay showHUDPersistent:[NSString stringWithFormat:@"%@ %.0f%%",
-                                            icon, newBrightness * 100]];
-        } else {
-            CGFloat newVolume = MAX(0.0, MIN(1.0, _startVolume + delta));
-            [[NSNotificationCenter defaultCenter]
-                postNotificationName:@"StremioGestureVolume"
-                              object:@(newVolume)];
-            NSString *icon = newVolume > 0.5 ? @"🔊" : @"🔉";
-            [self.overlay showHUDPersistent:[NSString stringWithFormat:@"%@ %.0f%%",
-                                            icon, newVolume * 100]];
-        }
-        if (gesture.state == UIGestureRecognizerStateEnded) {
-            [self.overlay showHUD:self.overlay.hudLabel.text];
-        }
-    }
+    } @catch (NSException *e) {}
 }
 
 - (void)handleDoubleTapLeft:(UITapGestureRecognizer *)gesture {
-    CGPoint location = [gesture locationInView:gesture.view];
-    if (location.x < gesture.view.bounds.size.width / 2) {
-        [[NSNotificationCenter defaultCenter]
-            postNotificationName:@"StremioGestureSeek" object:@(-10.0)];
-        [self.overlay showHUD:@"⏪ -10 sec"];
-    }
+    @try {
+        CGPoint location = [gesture locationInView:gesture.view];
+        if (location.x < gesture.view.bounds.size.width / 2) {
+            [[NSNotificationCenter defaultCenter]
+                postNotificationName:@"StremioGestureSeek" object:@(-10.0)];
+            [self.overlay showHUD:@"⏪ -10 sec"];
+        }
+    } @catch (NSException *e) {}
 }
 
 - (void)handleDoubleTapRight:(UITapGestureRecognizer *)gesture {
-    CGPoint location = [gesture locationInView:gesture.view];
-    if (location.x >= gesture.view.bounds.size.width / 2) {
-        [[NSNotificationCenter defaultCenter]
-            postNotificationName:@"StremioGestureSeek" object:@(10.0)];
-        [self.overlay showHUD:@"⏩ +10 sec"];
-    }
+    @try {
+        CGPoint location = [gesture locationInView:gesture.view];
+        if (location.x >= gesture.view.bounds.size.width / 2) {
+            [[NSNotificationCenter defaultCenter]
+                postNotificationName:@"StremioGestureSeek" object:@(10.0)];
+            [self.overlay showHUD:@"⏩ +10 sec"];
+        }
+    } @catch (NSException *e) {}
 }
 
 - (void)handleLongPress:(UILongPressGestureRecognizer *)gesture {
-    if (gesture.state == UIGestureRecognizerStateBegan) {
-        _isLongPressing = YES;
-        [[NSNotificationCenter defaultCenter]
-            postNotificationName:@"StremioGestureSpeed" object:@(2.0)];
-        [self.overlay showHUDPersistent:@"⚡️ 2x Speed"];
-    } else if (gesture.state == UIGestureRecognizerStateEnded ||
-               gesture.state == UIGestureRecognizerStateCancelled) {
-        _isLongPressing = NO;
-        [[NSNotificationCenter defaultCenter]
-            postNotificationName:@"StremioGestureSpeed" object:@(1.0)];
-        [self.overlay showHUD:@"▶️ 1x Speed"];
-    }
+    @try {
+        if (gesture.state == UIGestureRecognizerStateBegan) {
+            _isLongPressing = YES;
+            [self.overlay showHUDPersistent:@"⚡️ 2x Speed"];
+        } else if (gesture.state == UIGestureRecognizerStateEnded ||
+                   gesture.state == UIGestureRecognizerStateCancelled) {
+            _isLongPressing = NO;
+            [self.overlay showHUD:@"▶️ 1x Speed"];
+        }
+    } @catch (NSException *e) {}
 }
 
 - (void)handlePinch:(UIPinchGestureRecognizer *)gesture {
-    if (gesture.state == UIGestureRecognizerStateChanged) {
-        gesture.view.transform = CGAffineTransformScale(
-            gesture.view.transform, gesture.scale, gesture.scale);
-        gesture.scale = 1.0;
-    }
-    if (gesture.state == UIGestureRecognizerStateEnded) {
-        [self.overlay showHUD:@"🔍 Zoom"];
-    }
+    @try {
+        if (gesture.state == UIGestureRecognizerStateChanged) {
+            gesture.view.transform = CGAffineTransformScale(
+                gesture.view.transform, gesture.scale, gesture.scale);
+            gesture.scale = 1.0;
+        }
+        if (gesture.state == UIGestureRecognizerStateEnded) {
+            [self.overlay showHUD:@"🔍 Zoom"];
+        }
+    } @catch (NSException *e) {}
 }
 
 @end
